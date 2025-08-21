@@ -1,0 +1,26 @@
+{
+    "name": "CSE_CST328",
+    "keywords": "display",
+    "description": "Arduino library for CST328-based capacitive touch panels.",
+    "version": "0.1",
+    "license": "MIT",
+    "repository":
+    {
+        "type": "git",
+        "url": "https://github.com/CIRCUITSTATE/CSE_CST328.git"
+    },
+    "authors":
+    [
+      {
+        "name": "Vishnu Mohanan",
+        "url": "https://github.com/vishnumaiea"
+      },
+      {
+        "name": "CIRCUITSTATE",
+        "url": "https://github.com/CIRCUITSTATE",
+        "maintainer": true
+      }
+    ],
+    "frameworks": "arduino",
+    "platforms": "*"
+}

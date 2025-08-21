@@ -1,0 +1,33 @@
+#######################################
+# Syntax Coloring Map For CSE_CST328
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+TS_Point  KEYWORD1
+CSE_CST328  KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+begin KEYWORD2
+readData KEYWORD2
+fastReadData KEYWORD2
+getTouches KEYWORD2
+isTouched KEYWORD2
+getPoint KEYWORD2
+setRotation KEYWORD2
+getRotation KEYWORD2
+getWidth KEYWORD2
+getHeight KEYWORD2
+writeRegister8 KEYWORD2
+readRegister8 KEYWORD2
+readRegister32 KEYWORD2
+write16 KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
