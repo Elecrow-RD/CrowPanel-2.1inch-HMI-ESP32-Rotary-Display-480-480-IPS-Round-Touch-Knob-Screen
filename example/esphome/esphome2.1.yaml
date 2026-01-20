@@ -1,0 +1,312 @@
+esphome:
+  name: rotatry-21-new
+  friendly_name: Rotatry_2.1_new
+  platformio_options:
+    build_flags: "-DBOARD_HAS_PSRAM"
+    board_build.esp-idf.memory_type: qio_opi
+    board_build.flash_mode: dio
+  on_boot:
+    priority: 800
+    then:
+      # Bring up panel power before toggling RESET, then small delays. Based on Elecrow sample code, though colors are off
+      - output.turn_on: lcd_power
+      - output.turn_on: display_reset
+      - delay: 100ms
+      - output.turn_off: display_reset
+      - delay: 100ms
+      - output.turn_on: tp_reset
+      - delay: 100ms
+      - output.turn_off: tp_reset
+      - delay: 120ms
+      - output.turn_on: tp_reset
+      - delay: 120ms
+      - output.turn_on: tp_intr 
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: y
+      CONFIG_ESP32S3_DATA_CACHE_64KB: y
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
+      CONFIG_SPIRAM_RODATA: y
+
+psram:
+  mode: octal
+  speed: 80MHz 
+
+# Enable logging
+logger:
+  level: DEBUG 
+
+debug:
+  update_interval: 30s
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "iF6o2ZixwnSuJXpRxwkc+O9RmT7k1nW0os5/qu8fFU0="
+
+ota:
+  - platform: esphome
+    password: "ea7d5864d1e61fcf017b2c0588e9d2a6"
+
+mdns:
+  disabled: false
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Rotatry-21-New Fallback Hotspot"
+    password: "5FgIv0bcISGs"
+
+external_components:
+  - source: github://sEbola76/Makerfabs
+    components: [ cst826 ]
+
+captive_portal:
+  
+i2c:
+  sda: GPIO38
+  scl: GPIO39
+  id: bus_a
+  scan: true
+
+pcf8574:
+  - id: pcf
+    address: 0x21
+    
+
+# Map PCF8574 pins:
+# P0: Touch reset (output)
+# P2: Touch interrupt (input)
+# P3: LCD power (output)
+# P4: LCD reset (output)
+# P5: Encoder button (input pull-up)
+# (P1, P6, P7 unused here)
+output:
+  - platform: ledc
+    pin: 6
+    id: bl_pwm
+    frequency: 19531Hz
+  - platform: gpio
+    id: lcd_power
+    pin:
+      pcf8574: pcf
+      number: 3
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    id: tp_reset
+    pin:
+      pcf8574: pcf
+      number: 0
+      mode:
+        output: true
+  - platform: gpio
+    id: display_reset
+    pin:
+      pcf8574: pcf
+      number: 4
+      mode:
+        output: true
+      inverted: true
+  - platform: gpio
+    id: tp_intr
+    pin:
+      pcf8574: pcf
+      number: 2
+      mode:
+        output: true
+  - platform: gpio
+    id: encode_button
+    pin:
+      pcf8574: pcf
+      number: 5
+      mode:
+        input: true
+
+sensor:
+  - platform: rotary_encoder
+    id: knob
+    name: "Encoder"
+    pin_a:
+      number: 42
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: 4
+      mode:
+        input: true
+        pullup: true
+    resolution: 1
+    min_value: -100000
+    max_value:  100000
+
+
+light:
+  - platform: monochromatic
+    name: "LCD Backlight"
+    output: bl_pwm
+    id: display_backlight
+    default_transition_length: 0s
+    restore_mode: ALWAYS_ON
+
+color:
+  - id: my_red
+    red: 100%
+    green: 0%
+    blue: 0%
+
+spi:
+  clk_pin: 2
+  mosi_pin: 1
+
+font:
+  - file: "gfonts://Roboto"
+    id: roboto16
+    size: 16
+
+# GT911 Touchscreen Controller
+touchscreen:
+  platform: cst826
+  id: my_touchscreen
+  i2c_id: bus_a
+  skip_probe: True
+  update_interval: 25ms
+  address: 0x15
+  on_touch:
+    - logger.log:
+        format: Touch at (%d, %d)
+        args: [touch.x, touch.y]
+    - lambda: |-
+        ESP_LOGI("cal", "x=%d, y=%d, x_raw=%d, y_raw=%0d",
+            touch.x,
+            touch.y,
+            touch.x_raw,
+            touch.y_raw
+            );
+
+display:
+  - platform: st7701s
+    id: my_display
+    update_interval: 50ms
+
+    spi_mode: MODE3
+    color_order: RGB
+    invert_colors: false
+
+    dimensions:
+      width: 480
+      height: 480
+
+    #reset_pin:
+    #  pcf8574: pcf
+    #  number: 4
+
+    cs_pin: 16
+    de_pin: 40
+    hsync_pin: 15
+    vsync_pin: 7
+    pclk_pin: 41
+    data_pins:
+      red: [46, 3, 8, 18, 17]
+      green: [14, 13, 12, 11, 10, 9]
+      blue: [5, 45, 48, 47, 21]
+
+    hsync_front_porch: 20
+    hsync_pulse_width: 10
+    hsync_back_porch: 10
+    vsync_front_porch: 8
+    vsync_pulse_width: 10
+    vsync_back_porch: 10
+    show_test_card: true
+
+    pclk_frequency: 18MHz
+    pclk_inverted: true
+
+    # https://github.com/moononournation/Arduino_GFX/blob/365a70bbca253966c6b89fcb649f11d52e6dbb9d/src/display/Arduino_RGB_Display.cpp
+    init_sequence:
+      - [0x01]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10]  
+      
+      - [0xCC, 0x10]
+      - [0xCD, 0x08]
+
+      - [0xB0, 0x02, 0x13, 0x1B, 0x0D, 0x10, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xB1, 0x05, 0x13, 0x1B, 0x0D, 0x11, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x11]
+
+      - [0xB0, 0x5D]
+      - [0xB1, 0x43]
+      - [0xB2, 0x81]
+      - [0xB3, 0x80]
+
+      - [0xB5, 0x43]
+
+      - [0xB7, 0x85]
+      - [0xB8, 0x20]
+
+      - [0xC1, 0x78]
+      - [0xC2, 0x78]
+
+      - [0xD0, 0x88]
+
+      - [0xE0, 0x00, 0x00, 0x02]
+
+      - [0xE1, 0x03, 0xA0, 0x00, 0x00, 0x04, 0xA0, 0x00, 0x00, 0x00, 0x20, 0x20]
+
+      - [0xE2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+
+      - [0xE3, 0x00, 0x00, 0x11, 0x00]
+
+      - [0xE4, 0x22, 0x00]
+
+      - [0xE5, 0x05, 0xEC, 0xA0, 0xA0, 0x07, 0xEE, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+
+      - [0xE6, 0x00, 0x00, 0x11, 0x00]
+
+      - [0xE7, 0x22, 0x00]
+
+      - [0xE8, 0x06, 0xED, 0xA0, 0xA0, 0x08, 0xEF, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+
+      - [0xEB, 0x00, 0x00, 0x40, 0x40, 0x00, 0x00, 0x00]
+
+      - [0xED, 0xFF, 0xFF, 0xFF, 0xBA, 0x0A, 0xBF, 0x45, 0xFF, 0xFF, 0x54, 0xFB, 0xA0, 0xAB, 0xFF, 0xFF, 0xFF]
+
+      - [0xEF, 0x10, 0x0D, 0x04, 0x08, 0x3F, 0x1F]
+
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x13]
+      - [0xEF, 0x08]
+
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x00]
+
+      - [0x36, 0x00]
+      - [0x3A, 0x60]  # 0x70=RGB888, 0x60=RGB666, 0x50=RGB565
+
+      - [0x11]
+      - delay 100ms
+
+      - [0x29]
+      - delay 50ms
+
+lvgl:
+  displays:
+    - my_display
+  touchscreens:
+    - my_touchscreen
+  widgets:
+    - label:
+        align: CENTER
+        id: lbl_title
+        text_font: montserrat_28
+        text: "HelloWorld"
+
+    
