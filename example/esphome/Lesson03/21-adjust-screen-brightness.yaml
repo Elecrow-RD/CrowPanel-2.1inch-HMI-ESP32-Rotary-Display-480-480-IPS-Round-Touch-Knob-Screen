@@ -1,0 +1,320 @@
+esphome:
+  name: 21-adjust-screen-brightness
+  friendly_name: 2.1_Adjust_Screen_Brightness
+  platformio_options:
+    build_flags: "-DBOARD_HAS_PSRAM"  # Enable PSRAM support at compile time
+    board_build.esp-idf.memory_type: qio_opi  # Flash memory type configuration
+    board_build.flash_mode: dio       # Flash mode configuration
+
+  on_boot:
+    priority: 800                     # High priority boot sequence
+    then:
+      # Power and reset initialization
+      - output.turn_on: lcd_power       # Turn on LCD power
+      - output.turn_on: display_reset   # Assert display reset
+      - delay: 100ms                    # Wait for reset timing
+      - output.turn_off: display_reset  # Release display reset
+      - delay: 100ms                    # Allow display to stabilize
+
+      # Wait for rotary encoder to stabilize
+      - delay: 500ms
+
+      # Initial brightness (0.5 = 50%)
+      - light.turn_on:
+          id: display_backlight       # Backlight light entity
+          brightness: 0.5             # Set brightness to 50%
+
+      # === Initialize brightness and encoder (frozen state) ===
+      - lambda: |-
+          id(encoder_ready) = false;  // Disable encoder processing
+          id(brightness_value) = 50;  // Set internal brightness value to 50%
+
+          // Force rotary_encoder internal state to align with 50
+          id(knob).publish_state(0);
+
+      # Initial brightness again (ensure light state is correct)
+      - light.turn_on:
+          id: display_backlight       # Backlight light entity
+          brightness: 0.5             # Set brightness to 50%
+          
+      # Initialize LVGL brightness label at boot (show 50%)
+      - lambda: |-
+          char buf[10];               // Temporary buffer for text
+          snprintf(buf, sizeof(buf), "%d%%", id(brightness_value)); // Format percentage
+          lv_label_set_text(id(lbl_brightness), buf); // Update LVGL label
+
+      # Wait to ensure publish_state takes effect
+      - delay: 200ms
+
+      # Enable encoder after everything is aligned
+      - lambda: |-
+          id(encoder_ready) = true;   // Allow encoder events to be processed
+
+esp32:
+  board: esp32-s3-devkitc-1            # ESP32-S3 development board
+  framework:
+    type: esp-idf                     # Use ESP-IDF framework
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: y # Set CPU frequency to 240 MHz
+      CONFIG_ESP32S3_DATA_CACHE_64KB: y      # Enable 64 KB data cache
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y    # Fetch instructions from PSRAM
+      CONFIG_SPIRAM_RODATA: y                # Store read-only data in PSRAM
+
+psram:
+  mode: octal                         # Use Octal PSRAM mode
+  speed: 80MHz                        # PSRAM clock speed
+
+# Enable logging
+logger:
+  level: DEBUG                        # Enable debug-level logging
+
+debug:
+  update_interval: 30s                # Debug component update interval
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "Oj/HEb3nKIGD2NXr7lF+eWhLp3aFe9kfu8IHUFjtUpw="
+
+ota:
+  - platform: esphome
+    password: "990340fefafa2d0036caa72337068a18"
+
+wifi:
+  ssid: "elecrow888"
+  password: "elecrow2014"
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "21-Adjust-Screen-Brightness"
+    password: "JXZzO17aF90b"
+
+captive_portal:
+    
+i2c:
+  sda: GPIO38                         # I2C SDA pin
+  scl: GPIO39                         # I2C SCL pin
+  id: bus_a                           # I2C bus ID
+  scan: true                          # Enable I2C device scanning
+
+pcf8574:
+  - id: pcf                           # PCF8574 I/O expander ID
+    address: 0x21                     # I2C address of PCF8574
+    
+output:
+  - platform: ledc
+    pin: 6                            # PWM pin for backlight
+    id: bl_pwm                        # PWM output ID
+    frequency: 19531Hz                # PWM frequency
+
+  - platform: gpio
+    id: lcd_power                    # LCD power control output
+    pin:
+      pcf8574: pcf                   # Controlled via PCF8574
+      number: 3                      # PCF8574 pin number
+      mode:
+        output: true                 # Output mode
+      inverted: false                # Non-inverted logic
+
+  - platform: gpio
+    id: display_reset                # Display reset control
+    pin:
+      pcf8574: pcf                   # Controlled via PCF8574
+      number: 4                      # PCF8574 pin number
+      mode:
+        output: true                 # Output mode
+      inverted: true                 # Inverted reset signal
+        
+# Global variables (defined only, assigned in code)
+globals:
+  - id: brightness_value
+    type: int                        # Integer brightness value (0–100)
+    restore_value: false             # Do not restore from flash
+    initial_value: "50"              # Default brightness value
+
+  - id: encoder_ready
+    type: bool                       # Flag to enable encoder processing
+    restore_value: false             # Do not restore from flash
+    initial_value: "false"           # Disabled by default
+
+# Rotary encoder configuration
+sensor:
+  - platform: rotary_encoder
+    id: knob                         # Encoder sensor ID
+    name: "Encoder"                  # Sensor name
+
+    pin_a:
+      number: 42                          # GPIO pin number for rotary encoder channel A (CLK)
+      mode:
+        input: true                       # Set the pin to input mode (required for reading encoder signals)
+        pullup: true                      # Enable internal pull-up resistor to stabilize signal (prevents floating voltage)
+    pin_b:
+      number: 4                           # GPIO pin number for rotary encoder channel B (DT/DATA)
+      mode:
+        input: true                       # Set the pin to input mode (required for reading encoder signals)
+        pullup: true                      # Enable internal pull-up resistor to stabilize signal (prevents floating voltage)
+
+    filters:
+      - debounce: 20ms              # Debounce filter
+      - lambda: return round(x);     # Round encoder value
+
+    resolution: 1                    # Encoder resolution
+    internal: true 
+
+    on_value:
+          then:
+            - lambda: |-
+                // Skip encoder processing if system initialization is not complete
+                if (!id(encoder_ready)) {
+                  return;                // Ignore encoder events until ready
+                }
+                // Static variables retain value between callback executions
+                static bool first_run = true;   // First run flag (initialize state alignment)
+                static int last_encoder = 0;   // Store last encoder reading for delta calculation
+                // Get current encoder sensor value and cast to integer
+                int current = (int) id(knob).state; // Current encoder state
+
+                // First callback: only align state, do not change brightness
+                if (first_run) {
+                  last_encoder = current;  // Sync last_encoder with current encoder value
+                  first_run = false;       // Disable first run flag after initialization
+                  return;                  // Exit without brightness adjustment
+                }
+                
+                // Calculate the difference between current and last encoder values
+                int delta = current - last_encoder; // Calculate movement delta
+                last_encoder = current;              // Update last value for next iteration
+
+                // Exit if there's no effective encoder movement (delta = 0)
+                if (delta == 0) {
+                  return;  // No effective movement
+                }
+
+                // use delta directly (direction-correct & symmetric)
+                // Adjust brightness value based on encoder rotation direction
+                if (delta < 0) {
+                  id(brightness_value) += 5;   // Increase brightness by 5% for left rotation
+                } else {
+                  id(brightness_value) -= 5;   // Decrease brightness by 5% for right rotation
+                }
+
+                // Clamp brightness range to ensure value stays within 0-100%
+                if (id(brightness_value) < 0) id(brightness_value) = 0;    // Minimum brightness limit (0%)
+                if (id(brightness_value) > 100) id(brightness_value) = 100; // Maximum brightness limit (100%)
+
+                // Key: Directly write PWM (no queue, no delay)
+                // Convert brightness percentage (0-100) to PWM level (0.0-1.0)
+                float level = id(brightness_value) / 100.0f;
+                // Set PWM output level for backlight (immediate hardware control)
+                id(bl_pwm).set_level(level);
+
+                // Update LVGL (This is a slow process, but it doesn't affect the brightness)
+                // Temporary buffer to store formatted brightness percentage text
+                char buf[10];
+                // Format brightness value as percentage string (e.g., "50%")
+                snprintf(buf, sizeof(buf), "%d%%", id(brightness_value));
+                // Update LVGL label with new brightness value
+                lv_label_set_text(id(lbl_brightness), buf);
+                // Force immediate LVGL screen refresh to show updated value
+                lv_refr_now(NULL);
+
+# Backlight light component
+light:
+  - platform: monochromatic
+    name: "LCD Backlight"             # Light entity name
+    output: bl_pwm                    # PWM output
+    id: display_backlight             # Light ID
+    default_transition_length: 0s     # No fade transition
+    restore_mode: ALWAYS_ON           # Always turn on after boot
+
+spi:
+  clk_pin: 2                          # SPI clock pin
+  mosi_pin: 1                         # SPI MOSI pin
+
+# Display driver configuration
+display:
+  - platform: st7701s                 # ST7701S display driver
+    id: my_display                    # Display ID
+    update_interval: 50ms             # Refresh interval
+    spi_mode: MODE3                   # SPI mode
+    color_order: RGB                  # RGB color order
+    invert_colors: false              # Do not invert colors
+    dimensions:
+      width: 480                      # Display width
+      height: 480                     # Display height
+    cs_pin: 16                        # Chip select pin
+    de_pin: 40                        # Data enable pin
+    hsync_pin: 15                     # Horizontal sync pin
+    vsync_pin: 7                      # Vertical sync pin
+    pclk_pin: 41                      # Pixel clock pin
+    data_pins:
+      red: [46, 3, 8, 18, 17]          # Red channel data pins
+      green: [14, 13, 12, 11, 10, 9]   # Green channel data pins
+      blue: [5, 45, 48, 47, 21]        # Blue channel data pins
+    hsync_front_porch: 20              # HSYNC front porch
+    hsync_pulse_width: 10              # HSYNC pulse width
+    hsync_back_porch: 10               # HSYNC back porch
+    vsync_front_porch: 8               # VSYNC front porch
+    vsync_pulse_width: 10              # VSYNC pulse width
+    vsync_back_porch: 10               # VSYNC back porch
+    show_test_card: false              # Disable test pattern
+    pclk_frequency: 18MHz              # Pixel clock frequency
+    pclk_inverted: true                # Invert pixel clock
+    init_sequence:
+      - [0x01]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10]  
+      - [0xCC, 0x10]
+      - [0xCD, 0x08]
+      - [0xB0, 0x02, 0x13, 0x1B, 0x0D, 0x10, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xB1, 0x05, 0x13, 0x1B, 0x0D, 0x11, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x11]
+      - [0xB0, 0x5D]
+      - [0xB1, 0x43]
+      - [0xB2, 0x81]
+      - [0xB3, 0x80]
+      - [0xB5, 0x43]
+      - [0xB7, 0x85]
+      - [0xB8, 0x20]
+      - [0xC1, 0x78]
+      - [0xC2, 0x78]
+      - [0xD0, 0x88]
+      - [0xE0, 0x00, 0x00, 0x02]
+      - [0xE1, 0x03, 0xA0, 0x00, 0x00, 0x04, 0xA0, 0x00, 0x00, 0x00, 0x20, 0x20]
+      - [0xE2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE3, 0x00, 0x00, 0x11, 0x00]
+      - [0xE4, 0x22, 0x00]
+      - [0xE5, 0x05, 0xEC, 0xA0, 0xA0, 0x07, 0xEE, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE6, 0x00, 0x00, 0x11, 0x00]
+      - [0xE7, 0x22, 0x00]
+      - [0xE8, 0x06, 0xED, 0xA0, 0xA0, 0x08, 0xEF, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xEB, 0x00, 0x00, 0x40, 0x40, 0x00, 0x00, 0x00]
+      - [0xED, 0xFF, 0xFF, 0xFF, 0xBA, 0x0A, 0xBF, 0x45, 0xFF, 0xFF, 0x54, 0xFB, 0xA0, 0xAB, 0xFF, 0xFF, 0xFF]
+      - [0xEF, 0x10, 0x0D, 0x04, 0x08, 0x3F, 0x1F]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x13]
+      - [0xEF, 0x08]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x00]
+      - [0x36, 0x00]
+      - [0x3A, 0x60]
+      - [0x11]
+      - delay 100ms
+      - [0x29]
+      - delay 50ms
+
+# LVGL configuration
+lvgl:
+  displays:
+    - my_display                      # Bind LVGL to display
+  buffer_size: 50%                    # LVGL draw buffer size
+  widgets:
+    - label:
+        align: CENTER                 # Center alignment
+        id: lbl_title                 # Title label ID
+        y: 0                          # Vertical offset
+        text_font: montserrat_28      # Built-in font
+        text: "Knob Screen Brightness"# Title text
+    - label:
+        align: CENTER                 # Center alignment
+        id: lbl_brightness            # Brightness label ID
+        y: 50                         # Vertical offset
+        text_font: montserrat_48      # Large font for percentage
+        text: "50%"                   # Initial placeholder text
