@@ -1,6 +1,8 @@
 ### 1, Product picture
 
-![feature_of_2.1inch_rotary_knob_screen-ezgif.com-jpg-to-webp-converter](F:\wiki\CrowPanel 1.28inch-HMI ESP32 Rotary Display\CrowPanel 2.1inch-HMI ESP32 Rotary Display 480480 IPS Round Touch Knob Screen\feature_of_2.1inch_rotary_knob_screen-ezgif.com-jpg-to-webp-converter.webp)
+
+<img width="1000" height="1000" alt="image" src="https://github.com/user-attachments/assets/9f8e62c7-4a03-4840-bccc-34aa4370fbbd" />
+
 
 ### 2, Product version number
 
@@ -41,6 +43,10 @@
 | Net Weight                 | 80g                                                          |
 
 ### 4, Use the driver module
+
+| Name | dependency library |
+| ---- | ------------------ |
+| LVGL | lvgl/lvgl@8.3.11   |
 
 ### 5,Quick Start
 
