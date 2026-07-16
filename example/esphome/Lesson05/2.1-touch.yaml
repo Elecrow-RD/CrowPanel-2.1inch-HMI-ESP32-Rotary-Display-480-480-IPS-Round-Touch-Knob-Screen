@@ -1,0 +1,386 @@
+esphome:
+  name: 21-touch
+  friendly_name: 2.1-touch
+  platformio_options:
+    build_flags: "-DBOARD_HAS_PSRAM"
+    board_build.esp-idf.memory_type: qio_opi
+    board_build.flash_mode: dio
+  on_boot:
+    priority: 800
+    then:
+      - output.turn_on: touch_int_release
+      - output.turn_on: lcd_power
+      - output.turn_on: display_reset
+      - delay: 100ms
+      - output.turn_off: display_reset
+      - delay: 100ms
+      - delay: 500ms
+      - light.turn_on:
+          id: display_backlight
+          brightness: 0.5
+      - lambda: |-
+          id(encoder_ready) = false;
+          id(brightness_value) = 50;
+          id(knob).publish_state(0);
+          return;
+      - light.turn_on:
+          id: display_backlight
+          brightness: 0.5
+      - lambda: |-
+          char buf[10];
+          snprintf(buf, sizeof(buf), "%d%%", id(brightness_value));
+          lv_label_set_text(id(lbl_brightness), buf);
+          return;
+      - delay: 200ms
+      - lambda: |-
+          id(encoder_ready) = true;
+          return;  
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: y
+      CONFIG_ESP32S3_DATA_CACHE_64KB: y
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
+      CONFIG_SPIRAM_RODATA: y
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: DEBUG
+
+debug:
+  update_interval: 30s
+
+api:
+  encryption:
+    key: "q3ZppXTcJjqJC+0XhenFdL2fvY9DnIu7eeawjt3370k="
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "ThinkNode-G4_2a2d82"
+    password: "elecrow.com"
+
+captive_portal:
+
+i2c:
+  sda: GPIO38
+  scl: GPIO39
+  id: bus_a
+  scan: true
+
+pcf8574:
+  - id: pcf
+    address: 0x21
+
+output:
+  - platform: ledc
+    pin: 6
+    id: bl_pwm
+    frequency: 19531Hz
+  - platform: gpio
+    id: touch_int_release
+    pin:
+      pcf8574: pcf
+      number: 2
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    id: lcd_power
+    pin:
+      pcf8574: pcf
+      number: 3
+      mode:
+        output: true
+      inverted: false
+
+  - platform: gpio
+    id: display_reset
+    pin:
+      pcf8574: pcf
+      number: 4
+      mode:
+        output: true
+      inverted: true
+
+globals:
+  - id: brightness_value
+    type: int
+    restore_value: false
+    initial_value: "50"
+
+  - id: encoder_ready
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+sensor:
+  - platform: rotary_encoder
+    id: knob
+    name: "Encoder"
+
+    pin_a:
+      number: 42
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: 4
+      mode:
+        input: true
+        pullup: true
+
+    filters:
+      - debounce: 20ms
+      - lambda: return round(x);
+
+    resolution: 1
+    internal: true
+
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(encoder_ready)) return;
+            static bool first_run = true;
+            static int last_encoder = 0;
+            int current = (int)id(knob).state;
+
+            if (first_run) {
+              last_encoder = current;
+              first_run = false;
+              return;
+            }
+
+            int delta = current - last_encoder;
+            last_encoder = current;
+            if (delta == 0) return;
+
+            static int acc = 0;
+            acc += delta;
+
+            if (abs(acc) >= 1) {
+              id(brightness_value) += (acc > 0) ? -5 : 5;
+              id(brightness_value) = clamp(id(brightness_value), 0, 100);
+
+              float level = id(brightness_value) / 100.0f;
+              id(bl_pwm).set_level(level);
+
+              lv_arc_set_value(id(arc_brightness), id(brightness_value));
+
+              char buf[10];
+              snprintf(buf, sizeof(buf), "%d%%", id(brightness_value));
+              lv_label_set_text(id(lbl_brightness), buf);
+
+              lv_refr_now(NULL);
+              acc = 0;
+            }
+
+light:
+  - platform: monochromatic
+    name: "LCD Backlight"
+    output: bl_pwm
+    id: display_backlight
+    default_transition_length: 0s
+    restore_mode: ALWAYS_ON
+
+font:
+  - file: "gfonts://Montserrat"
+    id: montserrat_25
+    size: 25
+  - file: "gfonts://Montserrat"
+    id: montserrat_50
+    size: 50
+  - file: "gfonts://Montserrat"
+    id: montserrat_14
+    size: 14
+  - file: "gfonts://Montserrat"
+    id: montserrat_12
+    size: 12
+
+image:
+  - file: "bj_light_21_1.png"
+    id: img_bg_light
+    resize: 480x480
+    type: RGB565
+
+spi:
+  clk_pin: 2
+  mosi_pin: 1
+
+# ============================================================
+# 修改重点：display 块 — 移除所有与 LVGL 冲突的选项
+# ============================================================
+display:
+  - platform: st7701s
+    id: my_display
+    auto_clear_enabled: false
+    update_interval: never
+
+    spi_mode: MODE3
+    color_order: RGB
+    invert_colors: false
+
+    dimensions:
+      width: 480
+      height: 480
+
+    cs_pin: 16
+    de_pin: 40
+    hsync_pin: 15
+    vsync_pin: 7
+    pclk_pin: 41
+    data_pins:
+      red: [46, 3, 8, 18, 17]
+      green: [14, 13, 12, 11, 10, 9]
+      blue: [5, 45, 48, 47, 21]
+
+    hsync_front_porch: 20
+    hsync_pulse_width: 10
+    hsync_back_porch: 10
+    vsync_front_porch: 8
+    vsync_pulse_width: 10
+    vsync_back_porch: 10
+
+    # 删除 show_test_card（与 LVGL 不兼容）
+    pclk_frequency: 18MHz
+    pclk_inverted: true
+
+    init_sequence:
+      - [0x01]
+      - delay 120ms
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10]
+      - [0xC0, 0x3B, 0x00]
+      - [0xC1, 0x0B, 0x02]
+      - [0xC2, 0x00, 0x02]
+      - [0xCC, 0x10]
+      - [0xCD, 0x08]
+      - [0xB0, 0x02, 0x13, 0x1B, 0x0D, 0x10, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xB1, 0x05, 0x13, 0x1B, 0x0D, 0x11, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x11]
+      - [0xB0, 0x5d]
+      - [0xB1, 0x43]
+      - [0xB2, 0x81]
+      - [0xB3, 0x80]
+      - [0xB5, 0x43]
+      - [0xB7, 0x85]
+      - [0xB8, 0x20]
+      - [0xC1, 0x78]
+      - [0xC2, 0x78]
+      - [0xD0, 0x88]
+      - [0xE0, 0x00, 0x00, 0x02]
+      - [0xE1, 0x03, 0xA0, 0x00, 0x00, 0x04, 0xA0, 0x00, 0x00, 0x00, 0x20, 0x20]
+      - [0xE2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE3, 0x00, 0x00, 0x11, 0x00]
+      - [0xE4, 0x22, 0x00]
+      - [0xE5, 0x05, 0xEC, 0xA0, 0xA0, 0x07, 0xEE, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE6, 0x00, 0x00, 0x11, 0x00]
+      - [0xE7, 0x22, 0x00]
+      - [0xE8, 0x06, 0xED, 0xA0, 0xA0, 0x08, 0xEF, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xEB, 0x00, 0x00, 0x40, 0x40, 0x00, 0x00, 0x00]
+      - [0xEd, 0xFF, 0xFF, 0xFF, 0xBA, 0x0A, 0xBF, 0x45, 0xFF, 0xFF, 0x54, 0xFB, 0xA0, 0xAB, 0xFF, 0xFF, 0xFF]
+      - [0xEF, 0x10, 0x0D, 0x04, 0x08, 0x3F, 0x1F]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x13]
+      - [0xEF, 0x08]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x00]
+      - [0x36, 0x08]
+      - [0x3A, 0x60]
+      - [0x11]
+      - delay 100ms
+      - [0x29]
+      - delay 50ms
+touchscreen:
+  - platform: cst816
+    id: touch_panel
+    display: my_display
+    reset_pin:
+      pcf8574: pcf
+      number: 0
+      mode:
+        output: true
+      inverted: false
+    update_interval: 50ms
+# ============================================================
+# 修改重点：lvgl 块 — widgets 必须包裹在 pages 下
+# ============================================================
+lvgl:
+  displays:
+    - my_display
+  touchscreens:
+    - touchscreen_id: touch_panel
+  buffer_size: 50%
+  pages:
+    - id: main_page
+      widgets:
+        - image:
+            align: CENTER
+            id: img_bg
+            src: img_bg_light
+            width: 480
+            height: 480
+            antialias: true
+
+        - label:
+            align: CENTER
+            id: lbl_title
+            y: -50
+            text_font: montserrat_25
+            text: "Brightness"
+            text_color: 0xFFFFFF
+            text_opa: "100%"
+
+        - arc:
+            id: arc_brightness
+            adjustable: true
+            on_change:
+              - lambda: |-
+                  id(brightness_value) = (int)x;
+                  id(bl_pwm).set_level(id(brightness_value) / 100.0f);
+
+                  char buf[10];
+                  snprintf(buf, sizeof(buf), "%d%%", id(brightness_value));
+                  lv_label_set_text(id(lbl_brightness), buf);
+            align: CENTER
+            y: 0
+            width: 360
+            height: 360
+            rotation: 0
+            start_angle: 135
+            end_angle: 45
+            min_value: 0
+            max_value: 100
+            value: 50
+
+            arc_color: 0x1A1A1A
+            arc_width: 12
+            arc_rounded: true
+
+            indicator:
+              arc_color: 0x00D2FF
+              arc_width: 12
+              arc_rounded: true
+
+            knob:
+              bg_color: 0xFFFFFF
+              bg_opa: "100%"
+              width: 15
+              height: 15
+              radius: 7
+
+        - label:
+            align: CENTER
+            id: lbl_brightness
+            y: 0
+            text_font: montserrat_50
+            text: "50%"
+            text_color: 0xFFFFFF
+            text_opa: "100%"
