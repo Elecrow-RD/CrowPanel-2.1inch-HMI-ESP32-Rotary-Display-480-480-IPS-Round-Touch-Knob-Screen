@@ -1,53 +1,59 @@
-#define ENCODER_A_PIN 45
-#define ENCODER_B_PIN 42
-#define SWITCH_PIN 41
+#include <Arduino.h>
+#include <Wire.h>
+#include <PCF8574.h>
+
+#define SDA 38
+#define SCL 39
+
+#define ENCODER_CLK_PIN 42
+#define ENCODER_DT_PIN 4
 
 volatile unsigned long lastPressTime = 0;
 volatile int clickCount = 0;
-const unsigned long debounceTime = 20;       // ms
-const unsigned long doubleClickTime = 300;   // ms
 
-void IRAM_ATTR buttonISR() {
-  static unsigned long lastInterruptTime = 0;
-  unsigned long interruptTime = millis();
-  if (interruptTime - lastInterruptTime > debounceTime) {
-    if (!digitalRead(SWITCH_PIN)) {     // active low
-      lastPressTime = interruptTime;
-      clickCount++;
-    }
-  }
-  lastInterruptTime = interruptTime;
-}
+const unsigned long doubleClickTime = 300;   // ms
 
 int currentStateCLK = 0;
 int lastStateCLK = 0;
 
+PCF8574 pcf8574(I2C_IO_EXPANDER_ADDRESS);
+bool lastButtonState = true; // released (pull-up = high)
+
 void setup() {
   Serial.begin(115200);
 
-  pinMode(ENCODER_A_PIN, INPUT);
-  pinMode(ENCODER_B_PIN, INPUT);
-  pinMode(SWITCH_PIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(SWITCH_PIN), buttonISR, CHANGE);
+  // Encoder-Switch
+  Wire.begin(SDA, SCL);
+  pcf8574.pinMode(ENCODER_BUTTON_PIN, INPUT_PULLUP);
+  if (!pcf8574.begin()) {
+    Serial.println("Can't init pcf8574");
+  }
 
-  lastStateCLK = digitalRead(ENCODER_A_PIN);
-  Serial.println("Encoder Minimal Demo (A=45, B=42, SW=41)");
+  pinMode(ENCODER_CLK_PIN, INPUT);
+  pinMode(ENCODER_DT_PIN, INPUT);
+
+  lastStateCLK = digitalRead(ENCODER_CLK_PIN);
+  Serial.println("Encoder Minimal Demo (A=42, B=4, SW=PCF8574 P5)");
 }
 
 void loop() {
-  // Read encoder A
-  currentStateCLK = digitalRead(ENCODER_A_PIN);
+  // Read encoder clock
+  currentStateCLK = digitalRead(ENCODER_CLK_PIN);
 
-  // Detect rising edge on A
+  // Detect rising edge on encoder clock
   if (currentStateCLK != lastStateCLK && currentStateCLK == HIGH) {
-    bool ccw = (digitalRead(ENCODER_B_PIN) != currentStateCLK);
-    if (ccw) {
-      Serial.println("CCW");
-    } else {
-      Serial.println("CW");
-    }
+    bool ccw = (digitalRead(ENCODER_DT_PIN) != currentStateCLK);
+    Serial.println(ccw ? "CCW" : "CW");
   }
   lastStateCLK = currentStateCLK;
+
+  // Poll button with PCF8574 w/o interrupt
+  bool buttonState = pcf8574.digitalRead(ENCODER_BUTTON_PIN, true); // true = fresh read
+  if (lastButtonState && !buttonState) { // changed: released -> pressed
+    lastPressTime = millis();
+    clickCount += 1;
+  }
+  lastButtonState = buttonState;
 
   // Click / Double-click detection
   if (clickCount == 1 && millis() - lastPressTime > doubleClickTime) {
@@ -55,8 +61,6 @@ void loop() {
     clickCount = 0;
   } else if (clickCount >= 2) {
     Serial.println("DOUBLE CLICK");
-    clickCount = 0;
-  } else if (clickCount > 2) {
     clickCount = 0;
   }
 
