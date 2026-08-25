@@ -1,0 +1,381 @@
+esphome:
+  name: 21-touch                                      # Set the ESPHome device name
+  friendly_name: 2.1-touch                            # Set the friendly device name
+  platformio_options:                                  # Configure PlatformIO build options
+    build_flags: "-DBOARD_HAS_PSRAM"                   # Enable PSRAM support
+    board_build.esp-idf.memory_type: qio_opi           # Configure the ESP-IDF memory type
+    board_build.flash_mode: dio                        # Configure the flash mode
+  on_boot:                                              # Define actions to execute during boot
+    priority: 800                                      # Set the boot priority
+    then:                                               # Start the boot action sequence
+      - output.turn_on: touch_int_release              # Release the touch interrupt line
+      - output.turn_on: lcd_power                      # Enable LCD power
+      - output.turn_on: display_reset                  # Activate the display reset signal
+      - delay: 100ms                                    # Wait for 100 ms
+      - output.turn_off: display_reset                 # Release the display reset signal
+      - delay: 100ms                                    # Wait for 100 ms
+      - delay: 500ms                                    # Wait for display initialization
+      - light.turn_on:                                  # Turn on the display backlight
+          id: display_backlight                        # Select the display backlight
+          brightness: 0.5                               # Set the backlight brightness to 50%
+      - lambda: |-                                      # Execute custom C++ initialization code
+          id(encoder_ready) = false;                    // Disable encoder processing during startup
+          id(brightness_value) = 50;                    // Set the initial brightness value to 50
+          id(knob).publish_state(0);                    // Reset the rotary encoder state
+          return;                                       // Exit the lambda function
+      - light.turn_on:                                  # Turn on the display backlight
+          id: display_backlight                        # Select the display backlight
+          brightness: 0.5                               # Set the backlight brightness to 50%
+      - lambda: |-                                      # Update the initial brightness display
+          char buf[10];                                  // Create a buffer for the brightness text
+          snprintf(buf, sizeof(buf), "%d%%", id(brightness_value));  // Format the brightness value
+          lv_label_set_text(id(lbl_brightness), buf);    // Update the LVGL brightness label
+          return;                                       // Exit the lambda function
+      - delay: 200ms                                    # Wait for 200 ms
+      - lambda: |-                                      # Complete encoder initialization
+          id(encoder_ready) = true;                     // Enable encoder processing
+          return;                                       // Exit the lambda function
+
+esp32:
+  variant: esp32s3                                     # Select the ESP32-S3 variant
+  framework:                                            # Configure the development framework
+    type: esp-idf                                      # Use the ESP-IDF framework
+    sdkconfig_options:                                  # Configure ESP-IDF SDK options
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: y            # Set the CPU frequency to 240 MHz
+      CONFIG_ESP32S3_DATA_CACHE_64KB: y                 # Enable the 64 KB data cache
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y               # Allow instruction fetches from PSRAM
+      CONFIG_SPIRAM_RODATA: y                            # Store read-only data in PSRAM
+
+psram:
+  mode: octal                                           # Use Octal PSRAM mode
+  speed: 80MHz                                          # Set the PSRAM speed to 80 MHz
+
+logger:
+  level: DEBUG                                           # Set the logger level to DEBUG
+
+debug:
+  update_interval: 30s                                  # Update debug information every 30 seconds
+
+api:
+  encryption:                                            # Enable API encryption
+    key: "q3ZppXTcJjqJC+0XhenFdL2fvY9DnIu7eeawjt3370k=" # Set the API encryption key
+
+ota:
+  - platform: esphome                                    # Enable ESPHome OTA updates
+
+wifi:
+  ssid: !secret wifi_ssid                               # Load the Wi-Fi SSID from secrets
+  password: !secret wifi_password                       # Load the Wi-Fi password from secrets
+  ap:                                                    # Configure the fallback access point
+    ssid: "ThinkNode-G4_2a2d82"                          # Set the fallback AP SSID
+    password: "elecrow.com"                              # Set the fallback AP password
+
+captive_portal:                                          # Enable the captive portal
+
+i2c:
+  sda: GPIO38                                            # Set the I2C SDA pin
+  scl: GPIO39                                            # Set the I2C SCL pin
+  id: bus_a                                              # Assign an ID to the I2C bus
+  scan: true                                             # Enable I2C device scanning
+
+pcf8574:
+  - id: pcf                                               # Assign an ID to the PCF8574
+    address: 0x21                                        # Set the PCF8574 I2C address
+
+output:
+  - platform: ledc                                      # Use the LEDC PWM output
+    pin: 6                                               # Set GPIO6 as the PWM output pin
+    id: bl_pwm                                            # Assign an ID to the backlight PWM
+    frequency: 19531Hz                                   # Set the PWM frequency
+  - platform: gpio                                      # Use a GPIO output
+    id: touch_int_release                                # Assign an ID to the touch interrupt output
+    pin:
+      pcf8574: pcf                                       # Use the PCF8574 device
+      number: 2                                          # Select PCF8574 pin 2
+      mode:
+        output: true                                     # Configure the pin as an output
+      inverted: false                                    # Keep the output logic non-inverted
+  - platform: gpio                                      # Use a GPIO output
+    id: lcd_power                                        # Assign an ID to the LCD power output
+    pin:
+      pcf8574: pcf                                       # Use the PCF8574 device
+      number: 3                                          # Select PCF8574 pin 3
+      mode:
+        output: true                                     # Configure the pin as an output
+      inverted: false                                    # Keep the output logic non-inverted
+
+  - platform: gpio                                      # Use a GPIO output
+    id: display_reset                                    # Assign an ID to the display reset output
+    pin:
+      pcf8574: pcf                                       # Use the PCF8574 device
+      number: 4                                          # Select PCF8574 pin 4
+      mode:
+        output: true                                     # Configure the pin as an output
+      inverted: true                                     # Invert the reset signal logic
+
+globals:
+  - id: brightness_value                                 # Define the global brightness variable
+    type: int                                             # Store the brightness as an integer
+    restore_value: false                                  # Do not restore the value after reboot
+    initial_value: "50"                                   # Set the initial brightness to 50
+
+  - id: encoder_ready                                    # Define the encoder initialization state
+    type: bool                                            # Store the state as a Boolean value
+    restore_value: false                                  # Do not restore the value after reboot
+    initial_value: "false"                                # Disable encoder processing initially
+
+sensor:
+  - platform: rotary_encoder                              # Configure a rotary encoder sensor
+    id: knob                                               # Assign an ID to the encoder
+    name: "Encoder"                                        # Set the encoder name
+
+    pin_a:
+      number: 42                                           # Set GPIO42 as encoder channel A
+      mode:
+        input: true                                        # Configure channel A as an input
+        pullup: true                                       # Enable the internal pull-up resistor
+    pin_b:
+      number: 4                                            # Set GPIO4 as encoder channel B
+      mode:
+        input: true                                        # Configure channel B as an input
+        pullup: true                                       # Enable the internal pull-up resistor
+
+    filters:
+      - debounce: 20ms                                     # Apply 20 ms debounce filtering
+      - lambda: return round(x);                           # Round the encoder value to an integer
+
+    resolution: 1                                          # Set the encoder resolution
+    internal: true                                          # Keep the encoder sensor internal
+
+    on_value:
+      then:
+        - lambda: |-                                       # Process encoder value changes
+            if (!id(encoder_ready)) return;                // Ignore encoder input before initialization
+            static bool first_run = true;                  // Track the first encoder update
+            static int last_encoder = 0;                   // Store the previous encoder position
+            int current = (int)id(knob).state;             // Read the current encoder position
+
+            if (first_run) {                               // Handle the first encoder update
+              last_encoder = current;                      // Initialize the previous encoder position
+              first_run = false;                           // Mark the first update as completed
+              return;                                      // Exit without changing brightness
+            }
+
+            int delta = current - last_encoder;            // Calculate the encoder movement
+            last_encoder = current;                        // Save the current encoder position
+            if (delta == 0) return;                        // Ignore unchanged values
+
+            static int acc = 0;                             // Store accumulated encoder movement
+            acc += delta;                                   // Add the current movement to the accumulator
+
+            if (abs(acc) >= 1) {                            // Process accumulated movement
+              id(brightness_value) += (acc > 0) ? -5 : 5; // Change brightness by 5 percent
+              id(brightness_value) = clamp(id(brightness_value), 0, 100); // Limit brightness to 0-100
+
+              float level = id(brightness_value) / 100.0f;  // Convert brightness to a 0.0-1.0 level
+              id(bl_pwm).set_level(level);                 // Apply the brightness level to PWM
+
+              lv_arc_set_value(id(arc_brightness), id(brightness_value)); // Update the LVGL arc
+
+              char buf[10];                                // Create a buffer for the brightness text
+              snprintf(buf, sizeof(buf), "%d%%", id(brightness_value)); // Format the brightness text
+              lv_label_set_text(id(lbl_brightness), buf);  // Update the brightness label
+
+              lv_refr_now(NULL);                            // Refresh the LVGL display immediately
+              acc = 0;                                      // Clear the accumulated movement
+            }
+
+light:
+  - platform: monochromatic                              # Configure a monochromatic light
+    name: "LCD Backlight"                                  # Set the backlight name
+    output: bl_pwm                                         # Use the backlight PWM output
+    id: display_backlight                                  # Assign an ID to the backlight
+    default_transition_length: 0s                          # Disable brightness transition
+    restore_mode: ALWAYS_ON                                # Keep the backlight enabled after startup
+
+font:
+  - file: "gfonts://Montserrat"                            # Load the Montserrat font
+    id: montserrat_25                                     # Assign an ID to the 25 px font
+    size: 25                                               # Set the font size to 25 px
+  - file: "gfonts://Montserrat"                            # Load the Montserrat font
+    id: montserrat_50                                     # Assign an ID to the 50 px font
+    size: 50                                               # Set the font size to 50 px
+  - file: "gfonts://Montserrat"                            # Load the Montserrat font
+    id: montserrat_14                                     # Assign an ID to the 14 px font
+    size: 14                                               # Set the font size to 14 px
+  - file: "gfonts://Montserrat"                            # Load the Montserrat font
+    id: montserrat_12                                     # Assign an ID to the 12 px font
+    size: 12                                               # Set the font size to 12 px
+
+image:
+  - file: "bj_light_21_1.png"                              # Specify the background image file
+    id: img_bg_light                                      # Assign an ID to the image
+    resize: 480x480                                       # Resize the image to 480x480 pixels
+    type: RGB565                                           # Use the RGB565 image format
+
+spi:
+  clk_pin: 2                                               # Set GPIO2 as the SPI clock pin
+  mosi_pin: 1                                              # Set GPIO1 as the SPI MOSI pin
+
+display:
+  - platform: st7701s                                      # Use the ST7701S display platform
+    id: my_display                                         # Assign an ID to the display
+    auto_clear_enabled: false                              # Disable automatic display clearing
+    update_interval: never                                 # Disable automatic display updates
+
+    spi_mode: MODE3                                        # Set the SPI mode
+    color_order: RGB                                       # Set the color order to RGB
+    invert_colors: false                                   # Disable color inversion
+
+    dimensions:
+      width: 480                                           # Set the display width
+      height: 480                                          # Set the display height
+
+    cs_pin: 16                                             # Set the display chip-select pin
+    de_pin: 40                                             # Set the data-enable pin
+    hsync_pin: 15                                          # Set the horizontal sync pin
+    vsync_pin: 7                                           # Set the vertical sync pin
+    pclk_pin: 41                                           # Set the pixel clock pin
+    data_pins:
+      red: [46, 3, 8, 18, 17]                              # Configure the red data pins
+      green: [14, 13, 12, 11, 10, 9]                      # Configure the green data pins
+      blue: [5, 45, 48, 47, 21]                            # Configure the blue data pins
+
+    hsync_front_porch: 20                                  # Set the horizontal front porch
+    hsync_pulse_width: 10                                  # Set the horizontal sync pulse width
+    hsync_back_porch: 10                                   # Set the horizontal back porch
+    vsync_front_porch: 8                                   # Set the vertical front porch
+    vsync_pulse_width: 10                                  # Set the vertical sync pulse width
+    vsync_back_porch: 10                                   # Set the vertical back porch
+
+    pclk_frequency: 18MHz                                  # Set the pixel clock frequency
+    pclk_inverted: true                                    # Invert the pixel clock signal
+
+    init_sequence:
+      - [0x01]                                              # Send the display software reset command
+      - delay 120ms                                         # Wait for display reset completion
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10]             # Select the ST7701S command page
+      - [0xC0, 0x3B, 0x00]                                # Configure display timing
+      - [0xC1, 0x0B, 0x02]                                # Configure power-related parameters
+      - [0xC2, 0x00, 0x02]                                # Configure display control parameters
+      - [0xCC, 0x10]                                      # Configure panel control
+      - [0xCD, 0x08]                                      # Configure panel interface
+      - [0xB0, 0x02, 0x13, 0x1B, 0x0D, 0x10, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D] # Set positive gamma parameters
+      - [0xB1, 0x05, 0x13, 0x1B, 0x0D, 0x11, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D] # Set negative gamma parameters
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x11]             # Switch to another ST7701S command page
+      - [0xB0, 0x5d]                                      # Configure panel parameters
+      - [0xB1, 0x43]                                      # Configure panel parameters
+      - [0xB2, 0x81]                                      # Configure panel parameters
+      - [0xB3, 0x80]                                      # Configure panel parameters
+      - [0xB5, 0x43]                                      # Configure panel parameters
+      - [0xB7, 0x85]                                      # Configure panel parameters
+      - [0xB8, 0x20]                                      # Configure panel parameters
+      - [0xC1, 0x78]                                      # Configure power parameters
+      - [0xC2, 0x78]                                      # Configure power parameters
+      - [0xD0, 0x88]                                      # Configure power control
+      - [0xE0, 0x00, 0x00, 0x02]                         # Configure gamma-related parameters
+      - [0xE1, 0x03, 0xA0, 0x00, 0x00, 0x04, 0xA0, 0x00, 0x00, 0x00, 0x20, 0x20] # Configure gamma parameters
+      - [0xE2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] # Configure panel timing parameters
+      - [0xE3, 0x00, 0x00, 0x11, 0x00]                  # Configure panel timing
+      - [0xE4, 0x22, 0x00]                               # Configure panel timing
+      - [0xE5, 0x05, 0xEC, 0xA0, 0xA0, 0x07, 0xEE, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] # Configure gamma parameters
+      - [0xE6, 0x00, 0x00, 0x11, 0x00]                  # Configure panel timing
+      - [0xE7, 0x22, 0x00]                               # Configure panel timing
+      - [0xE8, 0x06, 0xED, 0xA0, 0xA0, 0x08, 0xEF, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] # Configure gamma parameters
+      - [0xEB, 0x00, 0x00, 0x40, 0x40, 0x00, 0x00, 0x00] # Configure panel timing
+      - [0xEd, 0xFF, 0xFF, 0xFF, 0xBA, 0x0A, 0xBF, 0x45, 0xFF, 0xFF, 0x54, 0xFB, 0xA0, 0xAB, 0xFF, 0xFF, 0xFF] # Configure panel timing parameters
+      - [0xEF, 0x10, 0x0D, 0x04, 0x08, 0x3F, 0x1F]    # Configure interface parameters
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x13]             # Switch to another command page
+      - [0xEF, 0x08]                                      # Configure panel control
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x00]             # Return to the default command page
+      - [0x36, 0x08]                                      # Configure display memory access control
+      - [0x3A, 0x60]                                      # Set the display pixel format
+      - [0x11]                                             # Exit display sleep mode
+      - delay 100ms                                        # Wait for the display to exit sleep mode
+      - [0x29]                                              # Turn on the display
+      - delay 50ms                                          # Wait for display startup
+
+touchscreen:
+  - platform: cst816                                     # Use the CST816 touchscreen platform
+    id: touch_panel                                      # Assign an ID to the touchscreen
+    display: my_display                                  # Associate the touchscreen with the display
+    reset_pin:                                           # Configure the touchscreen reset pin
+      pcf8574: pcf                                      # Use the PCF8574 device
+      number: 0                                          # Select PCF8574 pin 0
+      mode:
+        output: true                                     # Configure the pin as an output
+      inverted: false                                    # Keep the reset signal non-inverted
+    update_interval: 50ms                                # Update touchscreen data every 50 ms
+
+lvgl:
+  displays:
+    - my_display                                         # Use the configured ST7701S display
+  touchscreens:
+    - touchscreen_id: touch_panel                        # Use the configured CST816 touchscreen
+  buffer_size: 50%                                       # Allocate 50 percent of the LVGL buffer
+  pages:
+    - id: main_page                                      # Define the main LVGL page
+      widgets:
+        - image:                                          # Create the background image widget
+            align: CENTER                                 # Center the image on the screen
+            id: img_bg                                    # Assign an ID to the image widget
+            src: img_bg_light                             # Use the configured background image
+            width: 480                                    # Set the image width
+            height: 480                                   # Set the image height
+            antialias: true                               # Enable image antialiasing
+
+        - label:                                          # Create the title label
+            align: CENTER                                 # Center the label
+            id: lbl_title                                 # Assign an ID to the title label
+            y: -50                                         # Move the label upward by 50 pixels
+            text_font: montserrat_25                      # Use the 25 px Montserrat font
+            text: "Brightness"                            # Set the label text
+            text_color: 0xFFFFFF                           # Set the text color to white
+            text_opa: "100%"                               # Set the text opacity to 100 percent
+
+        - arc:                                             # Create the brightness adjustment arc
+            id: arc_brightness                             # Assign an ID to the brightness arc
+            adjustable: true                              # Allow the arc value to be adjusted
+            on_change:
+              - lambda: |-                                 # Update brightness when the arc changes
+                  id(brightness_value) = (int)x;           // Store the new brightness value
+                  id(bl_pwm).set_level(id(brightness_value) / 100.0f); // Apply the brightness level
+
+                  char buf[10];                            // Create a buffer for the brightness text
+                  snprintf(buf, sizeof(buf), "%d%%", id(brightness_value)); // Format the brightness value
+                  lv_label_set_text(id(lbl_brightness), buf); // Update the brightness label
+            align: CENTER                                 # Center the arc
+            y: 0                                           # Set the vertical position
+            width: 360                                     # Set the arc width
+            height: 360                                    # Set the arc height
+            rotation: 0                                    # Set the arc rotation
+            start_angle: 135                               # Set the arc start angle
+            end_angle: 45                                  # Set the arc end angle
+            min_value: 0                                   # Set the minimum value
+            max_value: 100                                 # Set the maximum value
+            value: 50                                      # Set the initial value
+
+            arc_color: 0x1A1A1A                            # Set the background arc color
+            arc_width: 12                                  # Set the background arc width
+            arc_rounded: true                               # Enable rounded arc ends
+
+            indicator:
+              arc_color: 0x00D2FF                           # Set the active indicator color
+              arc_width: 12                                # Set the active indicator width
+              arc_rounded: true                             # Enable rounded indicator ends
+
+            knob:
+              bg_color: 0xFFFFFF                            # Set the knob background color
+              bg_opa: "100%"                                # Set the knob opacity
+              width: 15                                    # Set the knob width
+              height: 15                                   # Set the knob height
+              radius: 7                                    # Set the knob corner radius
+
+        - label:                                           # Create the brightness value label
+            align: CENTER                                  # Center the brightness value
+            id: lbl_brightness                              # Assign an ID to the brightness label
+            y: 0                                            # Set the vertical position
+            text_font: montserrat_50                        # Use the 50 px Montserrat font
+            text: "50%"                                     # Set the initial brightness text
+            text_color: 0xFFFFFF                            # Set the text color to white
+            text_opa: "100%"                                # Set the text opacity to 100 percent
