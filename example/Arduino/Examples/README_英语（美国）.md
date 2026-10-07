@@ -1,5 +1,0 @@
-# ESP32-S3 2.1-inch course examples
-
-Five course examples corresponding to `1.28Examples`, with functionality kept consistent. They have been adapted for the 480×480 ST7701 RGB display, CST8XX touch input, PCF8574 power/reset control, and the 2.1-inch board pinout. Each directory is an independent sketch that can be opened directly in the Arduino IDE.
-
-Hardware mapping: Each course directory contains its own `Board21.h` and `Board21.cpp`. The display RGB pin and timing definitions are located within the corresponding course directory. I2C uses GPIO38/39; the touch address is 0x15; rotary encoder A/B uses GPIO42/4; the backlight uses GPIO6; the onboard LED uses GPIO43; and USB uses the ESP32-S3 native USB. Each course can be opened directly from its own directory and does not depend on board support files from other course directories.
